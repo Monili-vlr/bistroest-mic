@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Micrófono — Bistro Est</title>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Courier Prime', monospace;
+    background: #1a1a1a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    color: white;
+  }
+  .card {
+    background: #222;
+    border: 1px solid #3a3a3a;
+    border-radius: 16px;
+    padding: 28px 28px 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    width: min(300px, 92vw);
+  }
+  .mic-ring {
+    width: 72px; height: 72px; border-radius: 50%;
+    background: #2e2e2e; border: 2px solid #e0d8c3;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .mic-ring.listening { animation: pulse 1.4s ease-in-out infinite; }
+  .mic-ring svg { width: 32px; height: 32px; fill: #e0d8c3; }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(224,216,195,0.4); }
+    50%      { box-shadow: 0 0 0 14px rgba(224,216,195,0); }
+  }
+  canvas {
+    width: 100%; height: 48px;
+    border-radius: 6px;
+    background: #2e2e2e;
+    display: block;
+  }
+  .transcript {
+    font-size: 14px; color: #e0d8c3;
+    text-align: center; line-height: 1.5;
+    min-height: 40px; width: 100%;
+    word-break: break-word;
+  }
+  .status {
+    font-size: 11px; color: #777;
+    letter-spacing: 1px; text-align: center;
+  }
+  .btns {
+    display: flex; gap: 10px; width: 100%;
+  }
+  .btn {
+    flex: 1; padding: 10px 0; border-radius: 24px;
+    font-family: 'Courier Prime', monospace; font-size: 13px;
+    font-weight: bold; cursor: pointer; transition: all 0.25s;
+    letter-spacing: 0.5px;
+  }
+  .btn-send {
+    background: #e0d8c3; color: #222; border: none;
+  }
+  .btn-send:disabled { background: #444; color: #666; cursor: not-allowed; }
+  .btn-send:not(:disabled):hover { background: #fff; }
+  .btn-cancel {
+    background: none; color: #888; border: 1px solid #444;
+  }
+  .btn-cancel:hover { border-color: #e0d8c3; color: #e0d8c3; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="mic-ring listening" id="ring">
+    <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+  </div>
+
+  <canvas id="cv"></canvas>
+
+  <div class="transcript" id="tr">—</div>
+  <div class="status" id="st">Escuchando...</div>
+
+  <div class="btns">
+    <button class="btn btn-send" id="sendBtn" onclick="enviar()" disabled>Enviar</button>
+    <button class="btn btn-cancel" onclick="cancelar()">Cancelar</button>
+  </div>
+</div>
+
+<script>
+  const ring    = document.getElementById('ring');
+  const trEl    = document.getElementById('tr');
+  const stEl    = document.getElementById('st');
+  const sendBtn = document.getElementById('sendBtn');
+  const canvas  = document.getElementById('cv');
+  const ctx     = canvas.getContext('2d');
+
+  canvas.width  = canvas.offsetWidth  || 260;
+  canvas.height = canvas.offsetHeight || 48;
+
+  let capturedText = '';
+  let animId, audioCtx, analyser;
+
+  // ── Web Audio: ondas reales ──────────────────────
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(stream => {
+      audioCtx  = new (window.AudioContext || window.webkitAudioContext)();
+      analyser  = audioCtx.createAnalyser();
+      analyser.fftSize = 512;
+      audioCtx.createMediaStreamSource(stream).connect(analyser);
+      drawWave();
+    })
+    .catch(() => drawFlat());
+
+  function drawWave() {
+    const buf = new Uint8Array(analyser.fftSize);
+    const W = canvas.width, H = canvas.height;
+    function loop() {
+      animId = requestAnimationFrame(loop);
+      analyser.getByteTimeDomainData(buf);
+      ctx.fillStyle = '#2e2e2e';
+      ctx.fillRect(0, 0, W, H);
+      ctx.strokeStyle = '#e0d8c3';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const step = W / buf.length;
+      buf.forEach((v, i) => {
+        const x = i * step;
+        const y = (v / 128) * (H / 2);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+    loop();
+  }
+
+  function drawFlat() {
+    ctx.fillStyle = '#2e2e2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height / 2);
+    ctx.lineTo(canvas.width, canvas.height / 2);
+    ctx.stroke();
+  }
+
+  // ── Speech Recognition: lógica original ─────────
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SR) {
+    stEl.innerText = 'Navegador no compatible';
+  } else {
+    const recog = new SR();
+    recog.lang = 'es-ES';
+    recog.interimResults = true;   // muestra texto mientras hablas
+    recog.maxAlternatives = 1;
+    recog.continuous = false;
+
+    recog.onresult = (event) => {
+      let interim = '', final = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        event.results[i].isFinal ? final += t : interim += t;
+      }
+      trEl.innerText = final || interim;
+      if (final) {
+        capturedText = final;
+        stEl.innerText = 'Listo — pulsa Enviar';
+        sendBtn.disabled = false;
+        ring.classList.remove('listening');
+      }
+    };
+
+    recog.onerror = (e) => {
+      const msgs = {
+        'not-allowed': 'Permiso denegado.',
+        'no-speech':   'Sin voz detectada.',
+        'network':     'Error de red.',
+      };
+      stEl.innerText = msgs[e.error] || 'Error: ' + e.error;
+      ring.classList.remove('listening');
+    };
+
+    recog.start();
+  }
+
+  function enviar() {
+    const text = capturedText || trEl.innerText;
+    if (!text || text === '—') return;
+    if (window.opener) {
+      window.opener.postMessage({ type: 'VOICE_INPUT', text }, '*');
+    }
+    window.close();
+  }
+
+  function cancelar() {
+    if (animId) cancelAnimationFrame(animId);
+    if (audioCtx) audioCtx.close();
+    window.close();
+  }
+</script>
+</body>
+</html>
