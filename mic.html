@@ -8,63 +8,101 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 body { background:#1a1a1a; display:flex; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; color:white; }
 .card { background:#222; border:1px solid #3a3a3a; border-radius:16px; padding:28px; display:flex; flex-direction:column; align-items:center; gap:14px; width:min(280px,90vw); }
-.waves { display:flex; align-items:center; gap:5px; height:40px; }
-.wave { width:5px; background:#e0d8c3; border-radius:4px; animation:w 1s ease-in-out infinite; }
-.wave:nth-child(1){height:10px;animation-delay:0s}
-.wave:nth-child(2){height:20px;animation-delay:.1s}
-.wave:nth-child(3){height:36px;animation-delay:.2s}
-.wave:nth-child(4){height:20px;animation-delay:.3s}
-.wave:nth-child(5){height:10px;animation-delay:.4s}
-@keyframes w { 0%,100%{transform:scaleY(.4);opacity:.4} 50%{transform:scaleY(1);opacity:1} }
+canvas { width:100%; height:48px; border-radius:6px; display:block; }
 .text { font-size:14px; color:#e0d8c3; text-align:center; line-height:1.5; min-height:42px; width:100%; word-break:break-word; }
 .status { font-size:11px; color:#666; letter-spacing:1px; }
 .btns { display:flex; gap:10px; width:100%; }
 .btn { flex:1; padding:10px; border-radius:24px; font-size:13px; font-weight:bold; cursor:pointer; transition:.2s; }
 .send { background:#e0d8c3; color:#222; border:none; }
-.send:disabled { background:#333; color:#555; cursor:not-allowed; }
-.send:not(:disabled):hover { background:#fff; }
+.send:hover { background:#fff; }
 .cancel { background:none; color:#888; border:1px solid #444; }
 .cancel:hover { border-color:#e0d8c3; color:#e0d8c3; }
 </style>
 </head>
 <body>
 <div class="card">
-  <div class="waves"><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div><div class="wave"></div></div>
+  <canvas id="cv"></canvas>
   <div class="text" id="tr">—</div>
   <div class="status" id="st">Escuchando...</div>
   <div class="btns">
-    <button class="btn send" id="sb" onclick="enviar()" disabled>Enviar</button>
+    <button class="btn send" onclick="enviar()">Enviar</button>
     <button class="btn cancel" onclick="window.close()">Cancelar</button>
   </div>
 </div>
 <script>
 var captured = '';
+var canvas = document.getElementById('cv');
+var ctx = canvas.getContext('2d');
+canvas.width = canvas.offsetWidth || 260;
+canvas.height = 48;
+
+// Wave grafica reale — solo visualizzazione, non tocca il riconoscimento
+navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+  var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  var analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  audioCtx.createMediaStreamSource(stream).connect(analyser);
+  var buf = new Uint8Array(analyser.fftSize);
+  var W = canvas.width, H = canvas.height;
+  function draw() {
+    requestAnimationFrame(draw);
+    analyser.getByteTimeDomainData(buf);
+    ctx.fillStyle = '#2e2e2e';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = '#e0d8c3';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    var step = W / buf.length;
+    for (var i = 0; i < buf.length; i++) {
+      var y = (buf[i] / 128.0) * (H / 2);
+      i === 0 ? ctx.moveTo(0, y) : ctx.lineTo(i * step, y);
+    }
+    ctx.stroke();
+  }
+  draw();
+}).catch(function() {
+  // Sin permiso de audio: dibuja linea plana, el reconocimiento sigue funcionando
+  ctx.fillStyle = '#2e2e2e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, 24); ctx.lineTo(canvas.width, 24);
+  ctx.stroke();
+});
+
+// Reconocimiento — continuo, sin lang fijo (detecta cualquier idioma)
 var recog = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-recog.lang = 'es-ES';
 recog.interimResults = true;
 recog.maxAlternatives = 1;
-recog.continuous = false;
+recog.continuous = true;  // escucha hasta que pulsas Enviar
+
 recog.onresult = function(e) {
   var interim = '', final = '';
-  for (var i = e.resultIndex; i < e.results.length; i++) {
+  for (var i = 0; i < e.results.length; i++) {
     var t = e.results[i][0].transcript;
     if (e.results[i].isFinal) final += t; else interim += t;
   }
   document.getElementById('tr').innerText = final || interim;
   if (final) {
     captured = final;
-    document.getElementById('st').innerText = 'Listo — pulsa Enviar';
-    document.getElementById('sb').disabled = false;
+    document.getElementById('st').innerText = 'Listo — pulsa Enviar o sigue hablando';
   }
 };
+
 recog.onerror = function(e) {
-  document.getElementById('st').innerText = 'Error: ' + e.error;
+  if (e.error !== 'no-speech') {
+    document.getElementById('st').innerText = 'Error: ' + e.error;
+  }
 };
+
 recog.start();
+
 function enviar() {
   var text = captured || document.getElementById('tr').innerText;
-  if (!text || text === '—') return;
-  if (window.opener) window.opener.postMessage({ type: 'VOICE_INPUT', text: text }, '*');
+  if (text === '—') text = '';
+  try { recog.stop(); } catch(e) {}
+  if (window.opener && text) window.opener.postMessage({ type: 'VOICE_INPUT', text: text }, '*');
   window.close();
 }
 </script>
