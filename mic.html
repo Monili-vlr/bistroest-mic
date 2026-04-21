@@ -10,10 +10,10 @@ body { background:#1a1a1a; display:flex; align-items:center; justify-content:cen
 .card { background:#222; border:1px solid #3a3a3a; border-radius:16px; padding:28px; display:flex; flex-direction:column; align-items:center; gap:14px; width:min(280px,90vw); }
 canvas { width:100%; height:48px; border-radius:6px; display:block; }
 .text { font-size:14px; color:#e0d8c3; text-align:center; line-height:1.5; min-height:42px; width:100%; word-break:break-word; }
-.status { font-size:11px; color:#666; letter-spacing:1px; }
+.status { font-size:11px; color:#666; letter-spacing:1px; text-align:center; }
 .btns { display:flex; gap:10px; width:100%; }
-.btn { flex:1; padding:10px; border-radius:24px; font-size:13px; font-weight:bold; cursor:pointer; transition:.2s; }
-.send { background:#e0d8c3; color:#222; border:none; }
+.btn { flex:1; padding:10px; border-radius:24px; font-size:13px; font-weight:bold; cursor:pointer; transition:.2s; border:none; }
+.send { background:#e0d8c3; color:#222; }
 .send:hover { background:#fff; }
 .cancel { background:none; color:#888; border:1px solid #444; }
 .cancel:hover { border-color:#e0d8c3; color:#e0d8c3; }
@@ -35,59 +35,48 @@ var canvas = document.getElementById('cv');
 var ctx = canvas.getContext('2d');
 canvas.width = canvas.offsetWidth || 260;
 canvas.height = 48;
+var W = canvas.width, H = canvas.height;
 
-// Wave grafica reale — solo visualizzazione, non tocca il riconoscimento
+// Waves reales — separadas del reconocimiento
 navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
   var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   var analyser = audioCtx.createAnalyser();
   analyser.fftSize = 256;
   audioCtx.createMediaStreamSource(stream).connect(analyser);
   var buf = new Uint8Array(analyser.fftSize);
-  var W = canvas.width, H = canvas.height;
   function draw() {
     requestAnimationFrame(draw);
     analyser.getByteTimeDomainData(buf);
-    ctx.fillStyle = '#2e2e2e';
-    ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = '#e0d8c3';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    var step = W / buf.length;
+    ctx.fillStyle = '#2e2e2e'; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle = '#e0d8c3'; ctx.lineWidth = 2; ctx.beginPath();
     for (var i = 0; i < buf.length; i++) {
-      var y = (buf[i] / 128.0) * (H / 2);
-      i === 0 ? ctx.moveTo(0, y) : ctx.lineTo(i * step, y);
+      var y = (buf[i]/128.0)*(H/2);
+      i===0 ? ctx.moveTo(0,y) : ctx.lineTo(i*(W/buf.length),y);
     }
     ctx.stroke();
   }
   draw();
 }).catch(function() {
-  // Sin permiso de audio: dibuja linea plana, el reconocimiento sigue funcionando
-  ctx.fillStyle = '#2e2e2e';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = '#444';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(0, 24); ctx.lineTo(canvas.width, 24);
-  ctx.stroke();
+  ctx.fillStyle = '#2e2e2e'; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 1.5; ctx.beginPath();
+  ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
 });
 
-// Reconocimiento — continuo, sin lang fijo (detecta cualquier idioma)
+// Reconocimiento — sin continuous (compatible iOS Safari)
+var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 var recog = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-recog.interimResults = true;
+recog.interimResults = !isIOS; // iOS no soporta interimResults
 recog.maxAlternatives = 1;
-recog.continuous = true;  // escucha hasta que pulsas Enviar
+recog.continuous = false; // false = compatible con todos
 
 recog.onresult = function(e) {
-  var interim = '', final = '';
+  var text = '';
   for (var i = 0; i < e.results.length; i++) {
-    var t = e.results[i][0].transcript;
-    if (e.results[i].isFinal) final += t; else interim += t;
+    text += e.results[i][0].transcript;
   }
-  document.getElementById('tr').innerText = final || interim;
-  if (final) {
-    captured = final;
-    document.getElementById('st').innerText = 'Listo — pulsa Enviar o sigue hablando';
-  }
+  captured = text;
+  document.getElementById('tr').innerText = text;
+  document.getElementById('st').innerText = 'Listo — pulsa Enviar';
 };
 
 recog.onerror = function(e) {
@@ -96,11 +85,19 @@ recog.onerror = function(e) {
   }
 };
 
+// En iOS, al terminar reinicia para seguir escuchando
+recog.onend = function() {
+  var st = document.getElementById('st').innerText;
+  if (st === 'Escuchando...') {
+    try { recog.start(); } catch(e) {}
+  }
+};
+
 recog.start();
 
 function enviar() {
   var text = captured || document.getElementById('tr').innerText;
-  if (text === '—') text = '';
+  if (text === '—') return;
   try { recog.stop(); } catch(e) {}
   if (window.opener && text) window.opener.postMessage({ type: 'VOICE_INPUT', text: text }, '*');
   window.close();
